@@ -20,10 +20,10 @@ proton_mass = 1.0
 deuterium_mass = 2.0*proton_mass
 speed_to_SI_cm = 978897.1372228841 #from sqrt(energy in ev / mass in amu)*100
 
-nbr_events_per_ker = 100
+nbr_events_per_ker = 15000
 
-kers =  np.linspace(0.01, 30, 100) #eV
-#kers = np.array([1, 2, 3])
+#kers =  np.linspace(0.01, 6, 500) #eV
+kers = np.linspace(6, 10, 333) 
 BEAM_ENERGY = 18000 #eV
 
 #Velocity of center of mass in laboratory frame
@@ -66,7 +66,7 @@ def gen_valid_events(params_tuple):
             kin_energy1 = v_1cm_squared
             kin_energy2 = v_2cm_squared
             kin_energy3 = v_3cm_squared
-            kin_energies_sum = 1/3.0*(kin_energy1+kin_energy2+kin_energy3)
+            kin_energies_sum = kin_energy1+kin_energy2+kin_energy3
 
             #if kin_energies_sum > 0:
             scale_kin_energies = ker/kin_energies_sum
@@ -605,7 +605,7 @@ def compute_acceptance(ker_list, velocities_lab_idx, effective_nbr_events_per_ke
 def run_simulation():
 
     acceptance = []
-    kers_for_hist = []
+    #kers_for_hist = []
     det_info_list = []
 
     for ker in kers:
@@ -623,20 +623,22 @@ def run_simulation():
         np.arange(0, len(velocities_lab_list)), [det1_circle,det2_circle,det3_circle])
         (nbr_events_detected_var, velocities_lab_idx, det_info_sublist) = nbr_events_detected(nbr_events_detected_params)
 
-        kers_for_hist = itertools.chain(kers_for_hist, nbr_events_detected_var*[ker])
+        #kers_for_hist = itertools.chain(kers_for_hist, nbr_events_detected_var*[ker])
         det_info_list = itertools.chain(det_info_list, det_info_sublist)
 
-        acceptance_sub_list  = compute_acceptance([ker]*nbr_events_per_ker, velocities_lab_idx,
-        nbr_events_per_ker)
-        acceptance = itertools.chain(acceptance, acceptance_sub_list)
+        acceptance_l = nbr_events_detected_var/nbr_events_per_ker
+        acceptance.append(acceptance_l)
+        #compute_acceptance(ker, velocities_lab_idx,
+        #nbr_events_per_ker)
+        #acceptance = itertools.chain(acceptance, acceptance_sub_list)
 
     det_info_list = list(det_info_list)
     write_sim_results(det_info_list)
 
-    kers_for_hist = list(kers_for_hist)
-    print(kers_for_hist)
-    plt.hist(kers_for_hist, 10000)
-    plt.show()
+    #kers_for_hist = list(kers_for_hist)
+    #print(kers_for_hist)
+    #plt.hist(kers_for_hist, 10000)
+    #plt.show()
 
     acceptance = list(acceptance)
     det_ratio_file = open("det_ratio.txt", "w")
@@ -647,7 +649,7 @@ def run_simulation():
     plt.show()
 
 
-run_simulation()
+#run_simulation()
 
 # def velocity_in_circle(velocity, radius, det_id):
 #     det_z = z_pos_of_det(det_id)

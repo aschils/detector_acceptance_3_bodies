@@ -5,6 +5,7 @@ import shapely.geometry as sg
 import matplotlib.pyplot as plt
 import itertools
 import random as rand
+import scipy as sp
 from scipy.fftpack import fft, ifft
 from scipy.optimize import curve_fit
 from scipy import asarray as ar,exp
@@ -15,6 +16,48 @@ from scipy import asarray as ar,exp
 #Detectors measures positions of particles 1 and 2: X1, Y1, X2, Y2
 #and differences in arrival times: dT12 = t2-1 and dT13 = t3-t1
 #Valocity of center of mass in laboratory frame: \vec{V_cm}
+
+#Parse acceptance from file
+acceptance_f_path = "acceptance.txt"
+acceptance_f = open(acceptance_f_path, "r")
+acceptance_f_str = acceptance_f.readlines()
+acceptance_str = acceptance_f_str[-1]
+acceptance_kers =  np.linspace(0.01, 6, 500)
+acceptance = np.zeros(acceptance_kers.size)
+number_str = ""
+i = 0
+for char in acceptance_str:
+    if char == ",":
+        acceptance[i] = float(number_str)
+        number_str = ""
+        i = i+1
+    elif char != " " and char != "[":
+        number_str = number_str+char
+
+def chi_squared(x_v, shift_x, scale_x, scale_y):
+    k = 3
+    res = np.zeros(x_v.size)
+
+    for i in range(0, x_v.size):
+        x = scale_x*x_v[i]+shift_x
+        if x <= 0:
+            res[i] = 0
+        else:
+            half_k = k/2.0
+            num = x**(half_k-1)*math.exp(-x/2.0)
+            den = 2**half_k*sp.special.gamma(half_k)
+            res[i] = scale_y*num/den
+    return res
+
+(params, err) = sp.optimize.curve_fit(chi_squared, acceptance_kers, acceptance)
+shift_x, scale_x, scale_y = params
+acceptance_f = lambda x_v: chi_squared(x_v, shift_x, scale_x, scale_y)
+
+plt.plot(acceptance_kers, acceptance)
+plt.plot(acceptance_kers,acceptance_f(acceptance_kers))
+plt.show()
+
+
 
 L1 = 316 #cm
 L2 = 326 #cm
@@ -103,7 +146,7 @@ V_cm_norm = np.linalg.norm(V_cm)
 # # plt.bar(center, hist, align='center', width=width, color='g')
 # # plt.show()
 #
-nbr_bars = 300
+nbr_bars = 200
 #
 # noise_dT12_bool1 = dT12 < -4*10**-8
 # noise_dT12_bool2 = dT12 > -1.5*10**-7
@@ -611,127 +654,295 @@ def ker_of_gen_noise(X1, X2, Y1, Y2, dT12, dT13):
     ker_list_noise = compute_ker(V1, V2, V3)
     return ker_list_noise
 
-#exp_data_filt = remove_noisy_events(X1, X2, Y1, Y2, dT12, dT13)
+def acceptance_correction(kers, nbr_events, acceptance_kers, acceptance):
 
-#print("events number after remove_noisy_events: "+str(exp_data_filt.shape[0]))
+    corrected_nbr_events = np.zeros(len(kers))
 
-# X1r = exp_data_filt[:,0]
-# Y1r = exp_data_filt[:,1]
-# X2r = exp_data_filt[:,2]
-# Y2r = exp_data_filt[:,3]
-# dT12r = exp_data_filt[:,4]
-# dT13r = exp_data_filt[:,5]
+    for j in range(0, len(kers)):
+        ker = kers[j]
+        i = np.abs(ker-acceptance_kers).argmin()
+
+        a = 0
+        b = 0
+        delta_ker = 0
+        if ker <= acceptance_kers[i] and i != 0:
+            delta_ker = ker-acceptance_kers[i-1]
+            delta_x = acceptance_kers[i]-acceptance_kers[i-1]
+            if delta_x != 0:
+                a = (acceptance[i]-acceptance[i-1])/delta_x
+                b = acceptance[i-1]
+        elif i != len(acceptance_kers)-1:
+            delta_x = acceptance_kers[i+1]-acceptance_kers[i]
+            a = (acceptance[i+1]-acceptance[i])/delta_x
+            b = acceptance[i+1]
+            delta_ker = ker-acceptance_kers[i]
+
+        accept = a*delta_ker+b
+        if accept > 0:
+            corrected_nbr_events[j] = nbr_events[j]/accept
+        else:
+            corrected_nbr_events[j] = 0
+
+    #return corrected_nbr_events
+    return nbr_events/acceptance_f(kers)
+
+def rotate(dT12, dT13, rot_mat):
+    dT12_r = dT12*rot_mat[0,0]+dT13*rot_mat[0,1]
+    dT13_r = dT12*rot_mat[1,0]+dT13*rot_mat[1,1]
+    return (dT12_r, dT13_r)
+
+def noise_dT12_dT13(X1, Y1, X2, Y2, dT12, dT13):
+
+    theta = -30 #degré
+    theta = theta/360.0*2*math.pi
+    rot_mat = np.array([[math.cos(theta), -math.sin(theta)], [math.sin(theta),
+    math.cos(theta)]])
+
+    dT12_r, dT13_r = rotate(dT12, dT13, rot_mat)
+    point_size = abs(dT12[10]*dT13[10])
+    sg_x_left = -2.2*10**-7
+    sg_x_right = 1.32*10**-7
+    sg_y_bot = -4.2*10**-7
+    sg_y_up = -2.4*10**-7
+    sg_x_to_keep = np.logical_and(dT12_r > sg_x_left, dT12_r < sg_x_right)
+    sg_y_to_keep = np.logical_and(dT13_r > sg_y_bot, dT13_r < sg_y_up)
+    sig_bloc_to_keep = np.logical_and(sg_x_to_keep, sg_y_to_keep)
+    #sig_bloc_dT12_r = dT12_r[sig_bloc_to_keep]
+    #sig_bloc_dT13_r = dT13_r[sig_bloc_to_keep]
+    sig_bloc_dT12 = dT12[sig_bloc_to_keep]
+    sig_bloc_dT13 = dT13[sig_bloc_to_keep]
+    sig_bloc_X1 = X1[sig_bloc_to_keep]
+    sig_bloc_Y1 = Y1[sig_bloc_to_keep]
+    sig_bloc_X2 = X2[sig_bloc_to_keep]
+    sig_bloc_Y2 = Y2[sig_bloc_to_keep]
+
+    signal_plus_noise = (sig_bloc_X1, sig_bloc_Y1, sig_bloc_X2, sig_bloc_Y2,
+    sig_bloc_dT12, sig_bloc_dT13)
+
+    noises_bu = []
+    noise_bu_x_left = -9*10**-8
+    noise_bu_x_right = 3.33*10**-7
+    noise_bu_y_bot = -1.05*10**-6
+    delta_y = 3.6*10**-7
+    delta_y_up = delta_y/10
+    while noise_bu_y_bot+delta_y < sg_y_bot:
+        noise_bu_y_up = noise_bu_y_bot+delta_y
+
+        noise_bu_x_to_keep = np.logical_and(dT12 > noise_bu_x_left, dT12 < noise_bu_x_right)
+        noise_bu_y_to_keep  = np.logical_and(dT13 > noise_bu_y_bot, dT13 < noise_bu_y_up)
+        noise_bu_to_keep = np.logical_and(noise_bu_x_to_keep, noise_bu_y_to_keep)
+        noise_bu_dT12 = dT12[noise_bu_to_keep]
+        noise_bu_dT13 = dT13[noise_bu_to_keep]
+        noise_bu_X1 = X1[noise_bu_to_keep]
+        noise_bu_Y1 = Y1[noise_bu_to_keep]
+        noise_bu_X2 = X2[noise_bu_to_keep]
+        noise_bu_Y2 = Y1[noise_bu_to_keep]
+
+        #noise_dT13_translation = 5*10**-7
+        noise_dT13_translation = -1.42*10**-7-noise_bu_y_up
+        noise_bu_dT13 = noise_bu_dT13+noise_dT13_translation
+
+        # plt.scatter(dT12, dT13, s=point_size, color="b")
+        # plt.scatter(sig_bloc_dT12, sig_bloc_dT13, s=point_size, color="g")
+        # plt.scatter(noise_bu_dT12, noise_bu_dT13, s=point_size, color="r")
+        # plt.show()
+
+        noise_bu_dT12_r, noise_bu_dT13_r = rotate(noise_bu_dT12, noise_bu_dT13, rot_mat)
+
+        noise_bu_x_to_keep = np.logical_and(noise_bu_dT12_r > sg_x_left, noise_bu_dT12_r < sg_x_right)
+        noise_bu_y_to_keep  = np.logical_and(noise_bu_dT13_r > sg_y_bot, noise_bu_dT13_r < sg_y_up)
+        noise_bu_to_keep = np.logical_and(noise_bu_x_to_keep, noise_bu_y_to_keep)
+        noise_bu_dT12 = noise_bu_dT12[noise_bu_to_keep]
+        noise_bu_dT13 = noise_bu_dT13[noise_bu_to_keep]
+        noise_bu_X1 = noise_bu_X1[noise_bu_to_keep]
+        noise_bu_Y1 = noise_bu_Y1[noise_bu_to_keep]
+        noise_bu_X2 = noise_bu_X2[noise_bu_to_keep]
+        noise_bu_Y2 = noise_bu_Y2[noise_bu_to_keep]
+
+        noise = (noise_bu_X1, noise_bu_Y1, noise_bu_X2, noise_bu_Y2, noise_bu_dT12,\
+        noise_bu_dT13)
+
+        noises_bu.append(noise)
+
+        noise_bu_y_bot = noise_bu_y_bot+delta_y_up
+
+    #noise_bu_y_bot = -1*10**-6
+    #noise_bu_y_up = -6*10**-7
+    #noise_bu_y_bot =
+    #noise_bu_y_up = noise_bu_y_bot+4.5*10**-7
+    #
+    # noise_bu_x_to_keep = np.logical_and(dT12 > noise_bu_x_left, dT12 < noise_bu_x_right)
+    # noise_bu_y_to_keep  = np.logical_and(dT13 > noise_bu_y_bot, dT13 < noise_bu_y_up)
+    # noise_bu_to_keep = np.logical_and(noise_bu_x_to_keep, noise_bu_y_to_keep)
+    # noise_bu_dT12 = dT12[noise_bu_to_keep]
+    # noise_bu_dT13 = dT13[noise_bu_to_keep]
+    # noise_bu_X1 = X1[noise_bu_to_keep]
+    # noise_bu_Y1 = Y1[noise_bu_to_keep]
+    # noise_bu_X2 = X2[noise_bu_to_keep]
+    # noise_bu_Y2 = Y1[noise_bu_to_keep]
+    #
+    # plt.scatter(dT12, dT13, s=point_size, color="b")
+    # plt.scatter(sig_bloc_dT12, sig_bloc_dT13, s=point_size, color="g")
+    # plt.scatter(noise_bu_dT12, noise_bu_dT13, s=point_size, color="r")
+    # plt.show()
+    #
+    #
+    # noise_dT13_translation = 5*10**-7
+    # noise_bu_dT13 = noise_bu_dT13+noise_dT13_translation
+    #
+    # noise_bu_dT12_r, noise_bu_dT13_r = rotate(noise_bu_dT12, noise_bu_dT13, rot_mat)
+    #
+    # noise_bu_x_to_keep = np.logical_and(noise_bu_dT12_r > sg_x_left, noise_bu_dT12_r < sg_x_right)
+    # noise_bu_y_to_keep  = np.logical_and(noise_bu_dT13_r > sg_y_bot, noise_bu_dT13_r < sg_y_up)
+    # noise_bu_to_keep = np.logical_and(noise_bu_x_to_keep, noise_bu_y_to_keep)
+    # noise_bu_dT12 = noise_bu_dT12[noise_bu_to_keep]
+    # noise_bu_dT13 = noise_bu_dT13[noise_bu_to_keep]
+    # noise_bu_X1 = noise_bu_X1[noise_bu_to_keep]
+    # noise_bu_Y1 = noise_bu_Y1[noise_bu_to_keep]
+    # noise_bu_X2 = noise_bu_X2[noise_bu_to_keep]
+    # noise_bu_Y2 = noise_bu_Y2[noise_bu_to_keep]
+    #
+    # noise = (noise_bu_X1, noise_bu_Y1, noise_bu_X2, noise_bu_Y2, noise_bu_dT12,\
+    # noise_bu_dT13)
+    #
+    #
+    # plt.scatter(dT12, dT13, s=point_size, color="b")
+    # plt.scatter(sig_bloc_dT12, sig_bloc_dT13, s=point_size, color="g")
+    # plt.scatter(noise_bu_dT12, noise_bu_dT13, s=point_size, color="r")
+    # plt.show()
+
+    # for noise in noises_bu:
+    #     noise_bu_dT12 = noise[-2]
+    #     noise_bu_dT13 = noise[-1]
+    #     plt.scatter(dT12, dT13, s=point_size, color="b")
+    #     plt.scatter(sig_bloc_dT12, sig_bloc_dT13, s=point_size, color="g")
+    #     plt.scatter(noise_bu_dT12, noise_bu_dT13, s=point_size, color="r")
+    #     plt.show()
+
+
+    return (signal_plus_noise, noises_bu)
+
 #
-# (X1vr,Y1vr,X2vr,Y2vr,X3vr,Y3vr,dT12vr,dT13vr,t1vr) = \
-# keep_valid_events(X1r, Y1r, X2r, Y2r, dT12r, dT13r)
-# (V1, V2, V3) = compute_v_lab(t1vr, X1vr, Y1vr, X2vr, Y2vr, dT12vr, X3vr, Y3vr, dT13vr)
-# ker_list_r = compute_ker(V1, V2, V3)
-# hist_r, bins_r = np.histogram(ker_list_r, np.linspace(0, 60, nbr_bars))
-
+#
+#
+#
+#exp_data_filt = remove_noisy_events(X1, X2, Y1, Y2, dT12, dT13)
+#
+# #print("events number after remove_noisy_events: "+str(exp_data_filt.shape[0]))
+#
+# # X1r = exp_data_filt[:,0]
+# # Y1r = exp_data_filt[:,1]
+# # X2r = exp_data_filt[:,2]
+# # Y2r = exp_data_filt[:,3]
+#dT12r = exp_data_filt[:,4]
+#dT13r = exp_data_filt[:,5]
+# #
+# #(X1vr,Y1vr,X2vr,Y2vr,X3vr,Y3vr,dT12vr,dT13vr,t1vr) = \
+# #keep_valid_events(X1r, Y1r, X2r, Y2r, dT12r, dT13r)
+# #(V1, V2, V3) = compute_v_lab(t1vr, X1vr, Y1vr, X2vr, Y2vr, dT12vr, X3vr, Y3vr, dT13vr)
+# #ker_list_r = compute_ker(V1, V2, V3)
+# #hist_r, bins_r = np.histogram(ker_list_r, np.linspace(0, 60, nbr_bars))
+#
+signal_plus_noise, noises = noise_dT12_dT13(X1, Y1, X2, Y2, dT12, dT13)
+X1, Y1, X2, Y2, dT12, dT13 = signal_plus_noise
 val_events = keep_valid_events(X1, Y1, X2, Y2, dT12, dT13)
 (X1v,Y1v,X2v,Y2v,X3v,Y3v,dT12v,dT13v,t1v) = val_events
 (V1, V2, V3) = compute_v_lab(t1v, X1v, Y1v, X2v, Y2v, dT12v, X3v, Y3v, dT13v)
 
-t2 = t1v+dT12v
-t3 = t1v+dT13v
-
-#for i in range(0,len(X1v)):
-#    print(str(X1v[i])+" "+str(Y1v[i])+" "+str(X2v[i])+" "+str(Y2v[i])+" "+ \
-#    str(X3v[i])+" "+str(Y3v[i])+" "+str(t1v[i])+" "+str(t2[i])+" "+str(t3[i]))
-
-#plot_impacts(V1, V2, V3)
-
+# #t2 = t1v+dT12v
+# #t3 = t1v+dT13v
+#
+# #for i in range(0,len(X1v)):
+# #    print(str(X1v[i])+" "+str(Y1v[i])+" "+str(X2v[i])+" "+str(Y2v[i])+" "+ \
+# #    str(X3v[i])+" "+str(Y3v[i])+" "+str(t1v[i])+" "+str(t2[i])+" "+str(t3[i]))
+#
+# #plot_impacts(V1, V2, V3)
+#
 (total_ker, kerp1, kerp2, kerp3) = compute_ker(V1, V2, V3)
-
-#ker = np.array(ker_list)
-print(len(total_ker))
-total_ker = total_ker[total_ker < 10]
-plt.hist(total_ker, 300)
-plt.title("ker")
-plt.show()
-hist, bins = np.histogram(total_ker, np.linspace(0, 10, nbr_bars))
-
-kerp1 = kerp1[kerp1 < 10]
-plt.hist(kerp1, 300)
-plt.title("ker p1")
-plt.show()
-hist, bins = np.histogram(kerp1, np.linspace(0, 10, nbr_bars))
-
-kerp2 = kerp2[kerp2 < 10]
-plt.hist(kerp2, 300)
-plt.title("ker p2")
-plt.show()
-hist, bins = np.histogram(kerp2, np.linspace(0, 10, nbr_bars))
-
-kerp3 = kerp3[kerp3 < 10]
-plt.hist(kerp3, 300)
-plt.title("ker p3")
-plt.show()
-hist, bins = np.histogram(kerp3, np.linspace(0, 10, nbr_bars))
-
-
-# #(X1vs1,Y1vs1,X2vs1,Y2vs1,X3vs1,Y3vs1,dT12vs1,dT13vs1,t1vs1) =
-# #keep_valid_events(n_X1, n_Y1, n_X2, n_Y2, n_dT12, n_dT13)
-# #(V1, V2, V3) = compute_v_lab(t1vs1, X1vs1, Y1vs1, X2vs1, Y2vs1, dT12vs1, X3vs1, Y3vs1, dT13vs1)
-# #ker_list_noise = compute_ker(V1, V2, V3)
-# #ker_hist_noise = np.histogram(ker_list_noise, np.linspace(0, 60, nbr_bars))
-# ker_list_noise = ker_of_gen_noise(X1, X2, Y1, Y2, dT12, dT13)
-# ker_hist_noise = np.histogram(ker_list_noise, np.linspace(0, 60, nbr_bars))
-# hist_noise, bins = ker_hist_noise
-# width = 0.7 * (bins[1] - bins[0])
-# center = (bins[:-1] + bins[1:]) / 2
-# plt.bar(center, hist_noise, align='center', width=width, color='g')
-# #plt.bar(center, hist_mod2, align='center', width=width, color='b')
-# plt.title("ker_hist of noise")
+#
+# #ker = np.array(ker_list)
+# print(len(total_ker))
+# total_ker = total_ker[total_ker < 5.2]
+# plt.hist(total_ker, 300)
+# plt.title("ker")
 # plt.show()
+spb, bins = np.histogram(total_ker, np.linspace(0, 6, nbr_bars))
+centers = (bins[:-1] + bins[1:])/2
+spb_accept = acceptance_correction(centers, spb, acceptance_kers, acceptance)
+
+p1, = plt.plot(centers, spb, label="S+B without acceptance")
+p2, = plt.plot(centers, spb_accept, label="S+B with acceptance")
+plt.legend(handles=[p1, p2])
+plt.show()
+
+
 #
-# ker_hist_mod = hist-hist_noise
+# kerp1 = kerp1[kerp1 < 10]
+# plt.hist(kerp1, 300)
+# plt.title("ker p1")
+# plt.show()
+# hist, bins = np.histogram(kerp1, np.linspace(0, 10, nbr_bars))
 #
+# kerp2 = kerp2[kerp2 < 10]
+# plt.hist(kerp2, 300)
+# plt.title("ker p2")
+# plt.show()
+# hist, bins = np.histogram(kerp2, np.linspace(0, 10, nbr_bars))
+#
+# kerp3 = kerp3[kerp3 < 10]
+# plt.hist(kerp3, 300)
+# plt.title("ker p3")
+# plt.show()
+# hist, bins = np.histogram(kerp3, np.linspace(0, 10, nbr_bars))
+#
+#
+
+b_tot = np.zeros(nbr_bars-1)
+for noise in noises:
+    n_X1, n_Y1, n_X2, n_Y2, n_dT12, n_dT13 = noise
+    (X1vs1,Y1vs1,X2vs1,Y2vs1,X3vs1,Y3vs1,dT12vs1,dT13vs1,t1vs1) = \
+    keep_valid_events(n_X1, n_Y1, n_X2, n_Y2, n_dT12, n_dT13)
+    (V1, V2, V3) = compute_v_lab(t1vs1, X1vs1, Y1vs1, X2vs1, Y2vs1, dT12vs1, X3vs1, Y3vs1, dT13vs1)
+    (ker_list_noise, n_kerp1, n_kerp2, n_kerp3) = compute_ker(V1, V2, V3)
+    #ker_hist_noise = np.histogram(ker_list_noise, np.linspace(0, 60, nbr_bars))
+    # # ker_list_noise = ker_of_gen_noise(X1, X2, Y1, Y2, dT12, dT13)
+    b, bins = np.histogram(ker_list_noise, np.linspace(0, 6, nbr_bars))
+    b_tot = b_tot+b
+b_tot = b_tot/len(noises)
+centers = (bins[:-1] + bins[1:])/2
+
+b_accept = acceptance_correction(centers, b, acceptance_kers, acceptance)
+
+p1, = plt.plot(centers, b, label="B without acceptance")
+p2, = plt.plot(centers, b_accept, label="B with acceptance")
+plt.legend(handles=[p1, p2])
+plt.show()
+
 # # width = 0.7 * (bins[1] - bins[0])
-# center = (bins[:-1] + bins[1:]) / 2
-# # plt.bar(center, hist, align='center', width=width, color='g')
-# # plt.bar(center, ker_hist_mod, align='center', width=width, color='b')
+# # center = (bins[:-1] + bins[1:]) / 2
+# # plt.bar(center, hist_noise, align='center', width=width, color='g')
+# # #plt.bar(center, hist_mod2, align='center', width=width, color='b')
+# # plt.title("ker_hist of noise")
+# # plt.show()
+# #
+s = spb-b
+
+
+centers = (bins[:-1] + bins[1:]) / 2
+width = 0.7 * (bins[1] - bins[0])
+s_accept = acceptance_correction(centers, s, acceptance_kers, acceptance)
+
+p1, = plt.plot(centers, b_accept, label="B with acceptance")
+p2, = plt.plot(centers, spb_accept, label="S+B with acceptance")
+p3, = plt.plot(centers, s_accept, color="k", linewidth=2,label="S+B-B with acceptance")
+plt.legend(handles=[p1, p2, p3])
+plt.show()
+
+# #
+# # #plt.plot(center, hist, color='g')
+# # plt.plot(center, ker_hist_mod, color='b')
+# # plt.plot(center, hist_r, color='r')
+# # #plt.plot(center, hist_noise, color='k')
 # # plt.title("ker_hist_mod")
 # # plt.show()
 #
-# #plt.plot(center, hist, color='g')
-# plt.plot(center, ker_hist_mod, color='b')
-# plt.plot(center, hist_r, color='r')
-# #plt.plot(center, hist_noise, color='k')
-# plt.title("ker_hist_mod")
-# plt.show()
-
-
-
-#plt.hist(ker_list_shifted2, 300)
-#plt.show()
-#print("ker < 10 ratio: "+str(len(ker[ker < 10])/len(ker)))
-
-# t1 = []
-# for i in range(0,len(t1_simu)):
-#     roots = np.array([t1_1[i], t1_2[i], t1_3[i]])
-#     roots_real_part = np.real(roots)
-#     roots = roots[roots_real_part >= 0]
-#     complex_parts = np.abs(np.imag(roots))
-#     min_complex_part_idx = np.argmin(complex_parts)
-#     t1i = np.real(roots[min_complex_part_idx])
-#     t1.append(t1i)
-#
-#     if t1i >= 1.11643819e-07-0.000001e-07 and t1i <=  1.11643819e-07+0.000001e-07:
-#         print([t1_1[i], t1_2[i], t1_3[i]])
-
-#Use energy conservation to "find the good t among the 3?"
-
-
-
-#t1 = np.array(t1)
-
-#print("t1 simu "+str(t1_simu))
-#print("t1 "+str(t1))
-#print(t1_simu-t1)
-
-#t1_np = np.roots(np.array([a, b[0], c[0], d[0]]))
-#print(t1_np)
-#t1_np = t1_np[np.isreal(t1_np)]
-#print("t1 wolfram "+str([t1_1[0], t1_2[0], t1_3[0]]))
-#print("t1 numpy "+str(t1_np))
