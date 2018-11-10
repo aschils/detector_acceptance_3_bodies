@@ -6,6 +6,7 @@ from mpl_toolkits.mplot3d import Axes3D
 import itertools
 import dispy
 import shapely.geometry as sg
+from scipy.stats import gaussian_kde
 
 NBR_OF_CPUs = 200
 
@@ -20,10 +21,10 @@ proton_mass = 1.0
 deuterium_mass = 2.0*proton_mass
 speed_to_SI_cm = 978897.1372228841 #from sqrt(energy in ev / mass in amu)*100
 
-nbr_events_per_ker = 15000
+nbr_events_per_ker = 100 #15000
 
-#kers =  np.linspace(0.01, 6, 500) #eV
-kers = np.linspace(6, 10, 333) 
+kers =  np.linspace(3, 3, 500) #eV
+#kers = np.linspace(6, 10, 333)
 BEAM_ENERGY = 18000 #eV
 
 #Velocity of center of mass in laboratory frame
@@ -158,7 +159,7 @@ def distributed_events_gen(nbr_events_per_ker, local_kers):
     return (ker_list, kin_energies_list, velocities_cm_list, velocities_lab_list,
     effective_nbr_events_per_ker)
 
-def dalitz_plot(kin_energies_list):
+def dalitz_plot(kin_energies_list, show=True):
 
     dalitz_x = []
     dalitz_y = []
@@ -170,7 +171,9 @@ def dalitz_plot(kin_energies_list):
         dalitz_y.append(y)
 
     plt.scatter(dalitz_x,dalitz_y, s=0.5)
-    plt.show()
+    if show:
+        plt.show()
+
 
 #(kin_energies_list, velocities_cm_list) = distributed_events_gen()
 #dalitz_plot(kin_energies_list)
@@ -270,9 +273,9 @@ circles2D_z=None):
             (x_list, y_list) = list_of_pts_components_polygon(circles2D[i])
             ax.plot(x_list,y_list,circles2D_z[i],c="green")
 
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    ax.set_zlabel("z")
+    ax.set_xlabel("x (cm)")
+    ax.set_ylabel("y (cm)")
+    ax.set_zlabel("z (cm)")
     plt.show()
 
 det_pt_furthest_from_origin = np.array(det2_center)+np.array(sg.Point(det2_radius,0,0))
@@ -431,12 +434,6 @@ def line_from_velocity(velocity, end_of_line_pt_z):
 
 #dalitz_plot(kin_energies_list)
 
-#Dispay all events
-# for velocities in velocities_lab_list:
-#     line1 = line_from_velocity(velocities[0], det2_z)
-#     line2 = line_from_velocity(velocities[1], det2_z)
-#     line3 = line_from_velocity(velocities[2], det2_z)
-#     plot_dets([det1_circle,det2_circle,det3_circle], [line1,line2,line3])
 
 
 #nbr_total_event = len(velocities_lab_list)
@@ -617,11 +614,28 @@ def run_simulation():
         (kin_energies_list, velocities_cm_list, velocities_lab_list) = \
              gen_valid_events(gen_valid_events_params)
 
+
+        #Dispay all events
+        # for velocities in velocities_lab_list:
+        #      line1 = line_from_velocity(velocities[0], det2_z)
+        #      line2 = line_from_velocity(velocities[1], det2_z)
+        #      line3 = line_from_velocity(velocities[2], det2_z)
+        #      plot_dets([det1_circle,det2_circle,det3_circle], [line1,line2,line3])
+
+
         #(nbr_events_detected_var, velocities_lab_idx, det_info_list) = \
         #distributed_nbr_events_detected(velocities_lab_list)
         nbr_events_detected_params = (velocities_lab_list,
         np.arange(0, len(velocities_lab_list)), [det1_circle,det2_circle,det3_circle])
         (nbr_events_detected_var, velocities_lab_idx, det_info_sublist) = nbr_events_detected(nbr_events_detected_params)
+
+        for i in velocities_lab_idx:
+            velocities = velocities_lab_list[i]
+            line1 = line_from_velocity(velocities[0], det2_z)
+            line2 = line_from_velocity(velocities[1], det2_z)
+            line3 = line_from_velocity(velocities[2], det2_z)
+            plot_dets([det1_circle,det2_circle,det3_circle], [line1,line2,line3])
+
 
         #kers_for_hist = itertools.chain(kers_for_hist, nbr_events_detected_var*[ker])
         det_info_list = itertools.chain(det_info_list, det_info_sublist)
